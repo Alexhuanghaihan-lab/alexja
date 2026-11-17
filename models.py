@@ -168,11 +168,22 @@ class _PgConnection:
     """把 Postgres 连接包装成与 sqlite3 连接相同的用法：conn.execute / commit / close / cursor()."""
 
     def __init__(self, dsn):
+        import time
         import psycopg2
         import psycopg2.extras
         self._psycopg2 = psycopg2
         self._RealDictCursor = psycopg2.extras.RealDictCursor
-        self._conn = psycopg2.connect(dsn)
+        # Neon 免费版空闲后会挂起，首个连接偶尔会被重置，这里做几次重试
+        last_err = None
+        for attempt in range(4):
+            try:
+                self._conn = psycopg2.connect(dsn, connect_timeout=10)
+                break
+            except psycopg2.OperationalError as e:
+                last_err = e
+                time.sleep(0.8 * (attempt + 1))
+        else:
+            raise last_err
         self._lastrowid = None
 
     @staticmethod
