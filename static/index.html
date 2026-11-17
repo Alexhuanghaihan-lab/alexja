@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>GQ SparkJoy · 徽章工坊</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+
+<!-- 登录/注册 -->
+<div id="auth-view" class="view active">
+  <div class="auth-container">
+    <div class="brand">
+      <div class="logo">✦</div>
+      <h1>GQ SparkJoy</h1>
+      <p class="slogan">Spark Joy，定格闪光，永存热忱</p>
+    </div>
+
+    <div class="auth-card-wrap">
+    <div class="role-switch">
+      <button class="role-btn active" data-role="user">消费者</button>
+      <button class="role-btn" data-role="admin">管理者</button>
+    </div>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-mode="login">登录</button>
+      <button class="auth-tab" data-mode="register">注册</button>
+    </div>
+
+    <!-- 消费者登录 -->
+    <form id="user-login-form" class="auth-form active">
+      <input type="text" name="student_id" placeholder="学号" required>
+      <input type="password" name="password" placeholder="密码" required>
+      <button type="submit" class="btn-primary">登录</button>
+    </form>
+
+    <!-- 消费者注册 -->
+    <form id="user-register-form" class="auth-form">
+      <input type="text" name="name" placeholder="姓名" required>
+      <input type="text" name="class_name" placeholder="班级" required>
+      <input type="text" name="student_id" placeholder="学号" required>
+      <input type="text" name="phone" placeholder="手机号" required>
+      <input type="password" name="password" placeholder="设置密码" required>
+      <button type="submit" class="btn-primary">注册</button>
+      <p class="hint">一个学号只能注册一次</p>
+    </form>
+
+    <!-- 管理者登录 -->
+    <form id="admin-login-form" class="auth-form">
+      <input type="text" name="username" placeholder="账号" required>
+      <input type="password" name="password" placeholder="密码" required>
+      <button type="submit" class="btn-primary">登录</button>
+    </form>
+
+    <!-- 管理者注册 -->
+    <form id="admin-register-form" class="auth-form">
+      <input type="text" name="username" placeholder="设置账号" required>
+      <input type="password" name="password" placeholder="设置密码" required>
+      <input type="text" name="admin_key" placeholder="管理者密钥" required>
+      <button type="submit" class="btn-primary">验证并开通</button>
+      <p class="hint">需输入管理者密钥才能开通账号</p>
+    </form>
+    </div>
+  </div>
+</div>
+
+<!-- 消费者端 -->
+<div id="consumer-view" class="view">
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo-sm">✦</span>
+      <span class="brand-sm">GQ SparkJoy</span>
+    </div>
+    <div class="topbar-right">
+      <span id="consumer-name"></span>
+      <button id="consumer-logout" class="btn-ghost">退出</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- 产品页 -->
+    <section id="c-products" class="tab-pane active">
+      <h2 class="section-title">精选徽章</h2>
+      <div id="product-list" class="product-grid"></div>
+    </section>
+
+    <!-- 消费记录 -->
+    <section id="c-records" class="tab-pane">
+      <h2 class="section-title">消费记录</h2>
+      <div class="record-tabs">
+        <button class="record-tab active" data-status="pending">待交付</button>
+        <button class="record-tab" data-status="received">已收货</button>
+      </div>
+      <div id="order-list" class="order-list"></div>
+    </section>
+
+    <!-- 客服 -->
+    <section id="c-service" class="tab-pane">
+      <h2 class="section-title">客服中心</h2>
+      <div class="chat-box">
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="chat-input">
+          <input type="text" id="chat-input" placeholder="输入消息...">
+          <button id="chat-send" class="btn-primary">发送</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-tab="c-products">
+      <span class="nav-icon">🏠</span><span>产品</span>
+    </button>
+    <button class="nav-btn" data-tab="c-records">
+      <span class="nav-icon">📋</span><span>记录</span>
+    </button>
+    <button class="nav-btn" data-tab="c-service">
+      <span class="nav-icon">💬</span><span>客服</span>
+    </button>
+  </nav>
+</div>
+
+<!-- 管理者端 -->
+<div id="admin-view" class="view">
+  <header class="topbar admin-topbar">
+    <div class="topbar-left">
+      <span class="logo-sm">⚙</span>
+      <span class="brand-sm">GQ SparkJoy 管理后台</span>
+    </div>
+    <div class="topbar-right">
+      <span id="admin-name"></span>
+      <button id="admin-logout" class="btn-ghost">退出</button>
+    </div>
+  </header>
+
+  <div class="admin-layout">
+    <aside class="admin-sidebar">
+      <button class="sidebar-btn active" data-tab="a-products">产品管理</button>
+      <button class="sidebar-btn" data-tab="a-orders">订单管理</button>
+      <button class="sidebar-btn" data-tab="a-finance">财务管理</button>
+      <button class="sidebar-btn" data-tab="a-service">客服与评价</button>
+    </aside>
+
+    <main class="admin-main">
+      <!-- 产品管理 -->
+      <section id="a-products" class="admin-pane active">
+        <div class="pane-header">
+          <h2>产品管理</h2>
+          <button id="add-product-btn" class="btn-primary">+ 添加商品</button>
+        </div>
+        <div id="admin-product-list" class="product-grid admin-product-grid"></div>
+      </section>
+
+      <!-- 订单管理 -->
+      <section id="a-orders" class="admin-pane">
+        <div class="pane-header">
+          <h2>订单管理</h2>
+          <div class="filter-bar">
+            <button class="filter-btn active" data-status="">全部</button>
+            <button class="filter-btn" data-status="pending_payment">待支付</button>
+            <button class="filter-btn" data-status="paid">已支付</button>
+            <button class="filter-btn" data-status="delivered">已交付</button>
+            <button class="filter-btn" data-status="received">已收货</button>
+            <button class="filter-btn" data-status="cancelled">已取消</button>
+          </div>
+        </div>
+        <div id="admin-order-list" class="admin-order-list"></div>
+      </section>
+
+      <!-- 财务管理 -->
+      <section id="a-finance" class="admin-pane">
+        <div class="pane-header">
+          <h2>财务管理</h2>
+          <button id="export-excel-btn" class="btn-primary">导出 Excel</button>
+        </div>
+        <div class="finance-cards">
+          <div class="fin-card income"><div class="fin-label">总收入</div><div class="fin-value" id="fin-income">¥0</div></div>
+          <div class="fin-card cost"><div class="fin-label">总成本</div><div class="fin-value" id="fin-cost">¥0</div></div>
+          <div class="fin-card profit"><div class="fin-label">利润</div><div class="fin-value" id="fin-profit">¥0</div></div>
+          <div class="fin-card orders"><div class="fin-label">成交订单</div><div class="fin-value" id="fin-orders">0</div></div>
+        </div>
+
+        <div class="finance-section">
+          <h3>成本录入</h3>
+          <form id="cost-form" class="cost-form">
+            <input type="number" step="0.01" name="amount" placeholder="金额" required>
+            <input type="text" name="description" placeholder="描述">
+            <input type="date" name="cost_date">
+            <button type="submit" class="btn-primary">录入成本</button>
+          </form>
+        </div>
+
+        <div class="finance-section">
+          <h3>月度业绩</h3>
+          <div class="year-select">
+            <label>年份：</label>
+            <select id="year-select"></select>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>月份</th><th>收入</th><th>成本</th><th>利润</th><th>订单数</th></tr></thead>
+              <tbody id="monthly-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 客服与评价 -->
+      <section id="a-service" class="admin-pane">
+        <div class="pane-header">
+          <h2>客服与评价</h2>
+          <div class="filter-bar">
+            <button class="filter-btn active" data-sub="chat">客服对话</button>
+            <button class="filter-btn" data-sub="reviews">用户评价</button>
+          </div>
+        </div>
+        <div id="admin-chat-sub" class="sub-pane active">
+          <div class="admin-chat-layout">
+            <div id="user-conv-list" class="conv-list"></div>
+            <div class="chat-area">
+              <div id="admin-chat-messages" class="chat-messages"></div>
+              <div class="chat-input">
+                <input type="text" id="admin-chat-input" placeholder="输入消息..." disabled>
+                <button id="admin-chat-send" class="btn-primary" disabled>发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="admin-reviews-sub" class="sub-pane">
+          <div id="reviews-list" class="reviews-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- 下单弹窗 -->
+<div id="order-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>确认下单</h3>
+      <button class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="order-product-info">
+        <img id="modal-product-img" src="" alt="">
+        <div>
+          <h4 id="modal-product-name"></h4>
+          <p id="modal-product-price"></p>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>款式</label>
+        <select id="modal-style"></select>
+      </div>
+      <div class="form-group">
+        <label>数量</label>
+        <div class="qty-control">
+          <button class="qty-btn" data-act="dec">-</button>
+          <span id="modal-qty">1</span>
+          <button class="qty-btn" data-act="inc">+</button>
+        </div>
+      </div>
+      <form id="order-form">
+        <div class="form-group">
+          <label>姓名</label>
+          <input type="text" name="name" required>
+        </div>
+        <div class="form-group">
+          <label>班级</label>
+          <input type="text" name="class_name" required>
+        </div>
+        <div class="form-group">
+          <label>学号</label>
+          <input type="text" name="student_id" required>
+        </div>
+        <div class="form-group">
+          <label>手机号</label>
+          <input type="text" name="phone" required>
+        </div>
+        <div class="order-total">合计：<span id="modal-total">¥0</span></div>
+        <button type="submit" class="btn-primary full">提交订单</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 添加商品弹窗 -->
+<div id="product-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="product-modal-title">添加商品</h3>
+      <button class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="product-form">
+        <div class="form-group">
+          <label>商品名称</label>
+          <input type="text" name="name" required>
+        </div>
+        <div class="form-group">
+          <label>介绍</label>
+          <textarea name="description" rows="2"></textarea>
+        </div>
+        <div class="form-group">
+          <label>价格</label>
+          <input type="number" step="0.01" name="price" required>
+        </div>
+        <div class="form-group">
+          <label>图片URL</label>
+          <input type="text" name="image_url" placeholder="https://...">
+        </div>
+        <div class="form-group">
+          <label>款式（逗号分隔）</label>
+          <input type="text" name="styles" placeholder="金色,银色">
+        </div>
+        <div class="form-group">
+          <label>库存</label>
+          <input type="number" name="stock" value="0">
+        </div>
+        <button type="submit" class="btn-primary full">保存</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 评价弹窗 -->
+<div id="review-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>评价订单</h3>
+      <button class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="review-form">
+        <div class="form-group">
+          <label>评分</label>
+          <div class="rating-stars">
+            <span class="star" data-v="1">★</span>
+            <span class="star" data-v="2">★</span>
+            <span class="star" data-v="3">★</span>
+            <span class="star" data-v="4">★</span>
+            <span class="star" data-v="5">★</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>建议</label>
+          <textarea name="content" rows="3" placeholder="您的评价和建议..."></textarea>
+        </div>
+        <button type="submit" class="btn-primary full">提交评价</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

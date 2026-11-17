@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: gq-sparkjoy
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-class gthread --threads 100 --timeout 120 --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        sync: false
