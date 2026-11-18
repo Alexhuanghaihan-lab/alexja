@@ -101,6 +101,13 @@
     <section id="c-service" class="tab-pane">
       <h2 class="section-title">客服中心</h2>
       <div class="chat-box">
+        <div class="chat-head">
+          <span class="chat-avatar">🎧</span>
+          <div class="chat-head-info">
+            <div class="chat-head-name">在线客服</div>
+            <div class="chat-head-sub">GQ SparkJoy 官方客服</div>
+          </div>
+        </div>
         <div id="chat-messages" class="chat-messages"></div>
         <div class="chat-input">
           <input type="text" id="chat-input" placeholder="输入消息...">
@@ -119,6 +126,7 @@
     </button>
     <button class="nav-btn" data-tab="c-service">
       <span class="nav-icon">💬</span><span>客服</span>
+      <span class="nav-dot" id="service-dot" style="display:none"></span>
     </button>
   </nav>
 </div>
@@ -141,7 +149,7 @@
       <button class="sidebar-btn active" data-tab="a-products">产品管理</button>
       <button class="sidebar-btn" data-tab="a-orders">订单管理</button>
       <button class="sidebar-btn" data-tab="a-finance">财务管理</button>
-      <button class="sidebar-btn" data-tab="a-service">客服与评价</button>
+      <button class="sidebar-btn" data-tab="a-service">客服与评价<span class="nav-dot" id="admin-service-dot" style="display:none"></span></button>
       <button class="sidebar-btn" data-tab="a-super" id="super-nav-btn" style="display:none">账号管理（主账号）</button>
     </aside>
 
@@ -225,6 +233,13 @@
           <div class="admin-chat-layout">
             <div id="user-conv-list" class="conv-list"></div>
             <div class="chat-area">
+              <div class="chat-head">
+                <span class="chat-avatar">👤</span>
+                <div class="chat-head-info">
+                  <div class="chat-head-name" id="admin-chat-title">请选择左侧对话</div>
+                  <div class="chat-head-sub" id="admin-chat-subtitle"></div>
+                </div>
+              </div>
               <div id="admin-chat-messages" class="chat-messages"></div>
               <div class="chat-input">
                 <input type="text" id="admin-chat-input" placeholder="输入消息..." disabled>

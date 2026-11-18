@@ -528,7 +528,12 @@ def messages():
         )
         conn.commit()
         mid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        msg = conn.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone()
+        msg = conn.execute("""
+            SELECT m.*, a.username AS sender_name
+            FROM messages m
+            LEFT JOIN admins a ON m.sender_type='admin' AND a.id=m.sender_id
+            WHERE m.id=?
+        """, (mid,)).fetchone()
         conn.close()
         msg_dict = row_to_dict(msg)
         socketio.emit('new_message', msg_dict, room='admin')
@@ -536,9 +541,12 @@ def messages():
         return jsonify({'success': True, 'message': msg_dict})
     else:
         conn = get_db()
-        msgs = conn.execute(
-            "SELECT * FROM messages WHERE user_id=? ORDER BY created_at ASC", (user['id'],)
-        ).fetchall()
+        msgs = conn.execute("""
+            SELECT m.*, a.username AS sender_name
+            FROM messages m
+            LEFT JOIN admins a ON m.sender_type='admin' AND a.id=m.sender_id
+            WHERE m.user_id=? ORDER BY m.created_at ASC
+        """, (user['id'],)).fetchall()
         conn.close()
         return jsonify({'success': True, 'messages': rows_to_list(msgs)})
 
@@ -577,7 +585,12 @@ def admin_messages_with_user(uid):
         )
         conn.commit()
         mid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        msg = conn.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone()
+        msg = conn.execute("""
+            SELECT m.*, a.username AS sender_name
+            FROM messages m
+            LEFT JOIN admins a ON m.sender_type='admin' AND a.id=m.sender_id
+            WHERE m.id=?
+        """, (mid,)).fetchone()
         conn.close()
         msg_dict = row_to_dict(msg)
         socketio.emit('new_message', msg_dict, room=f"user_{uid}")
@@ -585,9 +598,12 @@ def admin_messages_with_user(uid):
         return jsonify({'success': True, 'message': msg_dict})
     else:
         conn = get_db()
-        msgs = conn.execute(
-            "SELECT * FROM messages WHERE user_id=? ORDER BY created_at ASC", (uid,)
-        ).fetchall()
+        msgs = conn.execute("""
+            SELECT m.*, a.username AS sender_name
+            FROM messages m
+            LEFT JOIN admins a ON m.sender_type='admin' AND a.id=m.sender_id
+            WHERE m.user_id=? ORDER BY m.created_at ASC
+        """, (uid,)).fetchall()
         conn.close()
         return jsonify({'success': True, 'messages': rows_to_list(msgs)})
 

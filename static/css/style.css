@@ -254,6 +254,19 @@ body {
   background: var(--card); border-radius: 16px; overflow: hidden;
   box-shadow: var(--shadow); border: 1px solid var(--border);
 }
+.chat-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: #fff; flex-shrink: 0;
+}
+.chat-avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--gradient); color: #fff; font-size: 20px;
+}
+.chat-head-info { min-width: 0; }
+.chat-head-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.chat-head-sub { font-size: 12px; color: var(--text-light); }
 .chat-messages {
   flex: 1; overflow-y: auto; padding: 16px;
   display: flex; flex-direction: column; gap: 12px;
@@ -267,15 +280,23 @@ body {
   animation: msgPop .25s ease;
 }
 @keyframes msgPop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-.msg.user {
+/* 自己的消息靠右（高亮），对方的消息靠左 */
+.msg.m-self {
   align-self: flex-end; background: var(--gradient); color: #fff;
   border-bottom-right-radius: 5px; box-shadow: 0 3px 10px rgba(108,92,231,0.2);
 }
-.msg.admin {
+.msg.m-other {
   align-self: flex-start; background: #f0eefb; color: var(--text);
   border-bottom-left-radius: 5px;
 }
-.msg .time { font-size: 11px; opacity: .7; margin-top: 4px; display: block; text-align: right; }
+.msg-meta {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px; margin-top: 5px; font-size: 11px; opacity: .75;
+}
+.msg.m-self .msg-meta { color: rgba(255,255,255,.9); }
+.msg.m-other .msg-meta { color: var(--text-light); }
+.msg .time { font-size: 11px; }
+.sender-tag { font-weight: 600; }
 .chat-input {
   display: flex; gap: 10px; padding: 12px 14px;
   border-top: 1px solid var(--border); background: #fff;
@@ -299,11 +320,23 @@ body {
   flex: 1; background: none; border: none; padding: 8px 0 10px;
   cursor: pointer; display: flex; flex-direction: column;
   align-items: center; gap: 2px; font-size: 11px; color: var(--text-light);
-  transition: color .2s;
+  transition: color .2s; position: relative;
 }
 .nav-btn.active { color: var(--primary); }
 .nav-btn.active .nav-icon { transform: translateY(-2px); }
 .nav-icon { font-size: 22px; transition: transform .2s; }
+
+/* 新消息红点 */
+.nav-dot {
+  position: absolute; width: 9px; height: 9px; border-radius: 50%;
+  background: #ff3b30; box-shadow: 0 0 0 2px #fff;
+}
+.nav-btn .nav-dot { top: 6px; left: 50%; transform: translateX(13px); }
+.sidebar-btn .nav-dot { top: 50%; right: 18px; transform: translateY(-50%); }
+.conv-dot {
+  position: absolute; top: 12px; right: 12px;
+  width: 9px; height: 9px; border-radius: 50%; background: #ff3b30;
+}
 
 /* ===== Admin Layout ===== */
 .admin-layout { display: flex; min-height: calc(100vh - 56px); }
@@ -411,7 +444,7 @@ body {
   width: 220px; background: var(--card); border-radius: 14px;
   overflow-y: auto; box-shadow: var(--shadow); border: 1px solid var(--border);
 }
-.conv-item { padding: 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .2s; }
+.conv-item { position: relative; padding: 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .2s; }
 .conv-item:hover { background: rgba(108,92,231,0.04); }
 .conv-item.active { background: rgba(108,92,231,0.1); }
 .conv-item .cname { font-weight: 600; font-size: 14px; }

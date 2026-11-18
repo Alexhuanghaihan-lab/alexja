@@ -8,6 +8,8 @@ let currentOrderQty = 1;
 let currentReviewOrderId = null;
 let currentReviewRating = 0;
 let adminChatUserId = null;
+let adminChatUser = null;          // 当前对话的顾客信息
+let unreadConvs = new Set();       // 有未读消息的顾客 id 集合
 let currentOrderFilter = '';
 
 function saveSession(role, token, user) {
@@ -45,6 +47,9 @@ async function api(method, path, body) {
 
 function openModal(id) { $('#' + id).classList.add('active'); }
 function closeModal(id) { $('#' + id).classList.remove('active'); }
+
+function showDot(sel) { const el = $(sel); if (el) el.style.display = 'block'; }
+function hideDot(sel) { const el = $(sel); if (el) el.style.display = 'none'; }
 
 function statusText(s) {
   return { pending_payment: '待支付', paid: '已支付', delivered: '已交付', received: '已收货', cancelled: '已取消' }[s] || s;
@@ -184,7 +189,7 @@ $$('.nav-btn').forEach(btn => {
     $$('.tab-pane').forEach(p => p.classList.remove('active'));
     $('#' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'c-records') loadOrders();
-    if (btn.dataset.tab === 'c-service') loadMessages();
+    if (btn.dataset.tab === 'c-service') { loadMessages(); hideDot('#service-dot'); }
   });
 });
 
@@ -344,12 +349,17 @@ async function loadMessages() {
 
 function renderChat() {
   const box = $('#chat-messages');
-  box.innerHTML = chatMessages.map(m => `
-    <div class="msg ${m.sender_type}">
-      ${m.content}
-      <span class="time">${fmtTime(m.created_at)}</span>
-    </div>
-  `).join('');
+  box.innerHTML = chatMessages.map(m => {
+    const isSelf = m.sender_type === 'user';   // 消费者端：自己的消息靠右
+    return `
+    <div class="msg ${isSelf ? 'm-self' : 'm-other'}">
+      <div class="msg-text">${m.content}</div>
+      <div class="msg-meta">
+        ${!isSelf && m.sender_name ? `<span class="sender-tag">客服 ${m.sender_name}</span>` : ''}
+        <span class="time">${fmtTime(m.created_at)}</span>
+      </div>
+    </div>`;
+  }).join('');
   box.scrollTop = box.scrollHeight;
 }
 
@@ -374,12 +384,19 @@ function connectSocket() {
     if (currentRole === 'user') {
       if (msg.sender_type === 'admin') {
         chatMessages.push(msg);
-        if ($('#c-service').classList.contains('active')) renderChat();
+        if ($('#c-service').classList.contains('active')) {
+          renderChat();
+        } else {
+          showDot('#service-dot');   // 不在客服页时，底部「客服」入口亮红点
+        }
       }
     } else if (currentRole === 'admin') {
       if (adminChatUserId && msg.user_id === adminChatUserId) {
         adminChatMessages.push(msg);
         renderAdminChat();
+      } else if (msg.sender_type === 'user') {
+        unreadConvs.add(msg.user_id);          // 标记该顾客有未读消息
+        showDot('#admin-service-dot');         // 侧栏「客服与评价」入口亮红点
       }
       loadConvList();
     }
@@ -419,7 +436,7 @@ $$('.sidebar-btn').forEach(btn => btn.addEventListener('click', () => {
   if (tab === 'a-products') loadAdminProducts();
   if (tab === 'a-orders') loadAdminOrders();
   if (tab === 'a-finance') { loadFinance(); loadMonthly(); loadCosts(); }
-  if (tab === 'a-service') { loadConvList(); loadReviews(); }
+  if (tab === 'a-service') { loadConvList(); loadReviews(); hideDot('#admin-service-dot'); }
   if (tab === 'a-super') { loadSuperUsers(); loadSuperAdmins(); }
 }));
 
@@ -766,22 +783,34 @@ $$('.filter-btn[data-sub]').forEach(btn => btn.addEventListener('click', () => {
   $('#admin-' + btn.dataset.sub + '-sub').classList.add('active');
 }));
 
+let convUsers = [];
 async function loadConvList() {
   const data = await api('GET', '/admin/messages/users');
   if (!data.success) return;
+  convUsers = data.users;
   const list = $('#user-conv-list');
   if (!data.users.length) { list.innerHTML = '<p style="padding:16px;color:var(--text-light)">暂无对话</p>'; return; }
   list.innerHTML = data.users.map(u => `
     <div class="conv-item ${adminChatUserId===u.id?'active':''}" onclick="selectConv(${u.id})">
       <div class="cname">${u.name}（${u.class_name}）</div>
       <div class="clast">${u.last_msg || ''}</div>
+      ${unreadConvs.has(u.id) && adminChatUserId!==u.id ? '<span class="conv-dot"></span>' : ''}
     </div>
   `).join('');
+}
+
+function setAdminChatHead(u) {
+  $('#admin-chat-title').textContent = u ? `${u.name}（${u.class_name}）` : '请选择左侧对话';
+  $('#admin-chat-subtitle').textContent = u ? '顾客 · 实时对话' : '';
 }
 
 let adminChatMessages = [];
 window.selectConv = async function(uid) {
   adminChatUserId = uid;
+  unreadConvs.delete(uid);
+  if (!unreadConvs.size) hideDot('#admin-service-dot');
+  const u = convUsers.find(x => x.id === uid);
+  setAdminChatHead(u);
   $('#admin-chat-input').disabled = false;
   $('#admin-chat-send').disabled = false;
   loadConvList();
@@ -791,12 +820,17 @@ window.selectConv = async function(uid) {
 
 function renderAdminChat() {
   const box = $('#admin-chat-messages');
-  box.innerHTML = adminChatMessages.map(m => `
-    <div class="msg ${m.sender_type}">
-      ${m.content}
-      <span class="time">${fmtTime(m.created_at)}</span>
-    </div>
-  `).join('');
+  box.innerHTML = adminChatMessages.map(m => {
+    const isSelf = m.sender_type === 'admin';   // 管理端：管理员自己的回复靠右
+    return `
+    <div class="msg ${isSelf ? 'm-self' : 'm-other'}">
+      <div class="msg-text">${m.content}</div>
+      <div class="msg-meta">
+        ${isSelf && m.sender_name ? `<span class="sender-tag">${m.sender_name}</span>` : ''}
+        <span class="time">${fmtTime(m.created_at)}</span>
+      </div>
+    </div>`;
+  }).join('');
   box.scrollTop = box.scrollHeight;
 }
 
