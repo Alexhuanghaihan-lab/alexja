@@ -50,9 +50,9 @@
     <form id="admin-login-form" class="auth-form">
       <input type="text" name="username" placeholder="账号" required>
       <input type="password" name="password" placeholder="密码" required>
-      <label class="super-toggle"><input type="checkbox" id="admin-super-check"> 主管理员登录</label>
-      <input type="password" id="admin-super-key" name="super_key" placeholder="主管理员密钥" style="display:none">
+      <input type="password" id="admin-super-key" name="super_key" placeholder="主管理员密钥（仅首次设定主账号时填写）">
       <button type="submit" class="btn-primary">登录</button>
+      <p class="hint">首次把本账号设为主账号：填入主管理员密钥登录一次即可。已设定过的主账号，以后直接登录，无需再填密钥。</p>
     </form>
 
     <!-- 管理者注册 -->

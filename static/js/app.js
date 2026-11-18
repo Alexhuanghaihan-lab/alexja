@@ -115,20 +115,17 @@ $('#user-register-form').addEventListener('submit', async e => {
   } else toast(data.msg);
 });
 
-$('#admin-super-check').addEventListener('change', e => {
-  $('#admin-super-key').style.display = e.target.checked ? 'block' : 'none';
-  $('#admin-super-key').required = e.target.checked;
-});
-
 $('#admin-login-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const superMode = $('#admin-super-check').checked;
+  const key = (e.target.super_key.value || '').trim();
   const body = {
     username: e.target.username.value.trim(),
     password: e.target.password.value,
   };
-  if (superMode) body.super_key = e.target.super_key.value.trim();
-  const data = await api('POST', superMode ? '/admin/super-login' : '/admin/login', body);
+  // 只有填写了主管理员密钥时才走主账号设定流程；平时留空即为普通登录
+  let path = '/admin/login';
+  if (key) { body.super_key = key; path = '/admin/super-login'; }
+  const data = await api('POST', path, body);
   if (data.success) {
     saveSession('admin', data.token, data.admin);
     enterAdmin();

@@ -489,11 +489,6 @@ body {
 .rating-stars .star.active { color: var(--gold); }
 .modal-actions { display: flex; gap: 10px; margin-top: 6px; }
 .modal-actions .btn-primary, .modal-actions .btn-outline { flex: 1; box-shadow: none; }
-.super-toggle {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 13px; color: var(--text-light); cursor: pointer; user-select: none;
-}
-.super-toggle input { width: auto; accent-color: var(--primary); }
 .file-upload-btn {
   display: inline-block; padding: 10px 16px; margin-bottom: 8px;
   border: 1.5px dashed var(--primary-light); border-radius: 10px;
