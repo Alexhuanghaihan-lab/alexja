@@ -487,6 +487,42 @@ body {
 }
 .rating-stars { font-size: 32px; color: #e0e0e0; cursor: pointer; letter-spacing: 4px; }
 .rating-stars .star.active { color: var(--gold); }
+.modal-actions { display: flex; gap: 10px; margin-top: 6px; }
+.modal-actions .btn-primary, .modal-actions .btn-outline { flex: 1; box-shadow: none; }
+.super-toggle {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-light); cursor: pointer; user-select: none;
+}
+.super-toggle input { width: auto; accent-color: var(--primary); }
+.file-upload-btn {
+  display: inline-block; padding: 10px 16px; margin-bottom: 8px;
+  border: 1.5px dashed var(--primary-light); border-radius: 10px;
+  color: var(--primary); font-size: 13px; cursor: pointer;
+  background: rgba(108,92,231,0.05); transition: all .2s;
+}
+.file-upload-btn:hover { background: rgba(108,92,231,0.12); }
+.img-preview {
+  display: block; max-width: 120px; max-height: 120px; margin-top: 10px;
+  border-radius: 12px; object-fit: cover;
+}
+.img-preview:not([src]) { display: none; }
+
+/* ===== Cost list ===== */
+.cost-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.cost-item {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 14px; box-shadow: var(--shadow);
+  font-size: 13px;
+}
+.cost-item .cost-date { color: var(--text-light); min-width: 90px; }
+.cost-item .cost-desc { flex: 1; color: var(--text); }
+.cost-item .cost-amount { color: var(--accent); font-weight: 700; }
+.cost-item button { padding: 6px 12px; font-size: 12px; }
+
+/* ===== Super admin status ===== */
+.status-ok { color: var(--success); font-weight: 600; }
+.status-off { color: var(--danger); font-weight: 600; }
 
 /* ===== Toast ===== */
 .toast {

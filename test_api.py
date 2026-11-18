@@ -27,13 +27,13 @@ def get(url, token=None):
 BASE = os.environ.get('API_BASE', 'http://127.0.0.1:8080') + '/api'
 
 print('=== 1. 注册消费者 ===')
-s, d = post(BASE + '/register', {'name': '张三', 'class_name': '高一1班', 'student_id': '2026001', 'phone': '13800138000', 'password': '123456'})
+s, d = post(BASE + '/register', {'name': '张三', 'class_name': '高一1班', 'phone': '13800138000', 'password': '123456'})
 print(s, d.get('success'), d.get('msg', ''))
 user_token = d.get('token')
 uid = d.get('user', {}).get('id')
 
-print('=== 2. 重复学号注册(应失败) ===')
-s, d = post(BASE + '/register', {'name': '李四', 'class_name': '高一2班', 'student_id': '2026001', 'phone': '13900139000', 'password': '123456'})
+print('=== 2. 重复手机号注册(应失败) ===')
+s, d = post(BASE + '/register', {'name': '李四', 'class_name': '高一2班', 'phone': '13800138000', 'password': '123456'})
 print(s, d.get('success'), d.get('msg', ''))
 
 print('=== 3. 获取商品 ===')
@@ -67,7 +67,7 @@ print('商品数:', len(d.get('products', [])), '首个ID:', first_product_id)
 print('=== 6. 下单 ===')
 s, d = post(BASE + '/orders', {
     'product_id': first_product_id, 'quantity': 2, 'style': '金色',
-    'name': '张三', 'class_name': '高一1班', 'student_id': '2026001', 'phone': '13800138000'
+    'name': '张三', 'class_name': '高一1班', 'phone': '13800138000'
 }, user_token)
 print(s, d.get('success'), d.get('msg', ''))
 if d.get('order'):

@@ -11,10 +11,14 @@ from flask_socketio import SocketIO, join_room
 from models import get_db, init_db, row_to_dict, rows_to_list
 
 ADMIN_KEY = "SPARKJOY-ADMIN-2026"
+# 主管理员（主账号）登录所需的额外密钥
+SUPER_KEY = "SPARKJOY-OWNER-2026"
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.config['SECRET_KEY'] = 'sparkjoy-secret-key-2026'
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# 商品图片以 base64 形式存库，放宽请求体上限
+app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
@@ -25,9 +29,9 @@ def hash_password(pwd):
     return hashlib.sha256(pwd.encode()).hexdigest()
 
 
-def generate_token(role, uid):
+def generate_token(role, uid, is_super=False):
     token = uuid.uuid4().hex
-    tokens[token] = {'role': role, 'id': uid}
+    tokens[token] = {'role': role, 'id': uid, 'super': is_super}
     return token
 
 
@@ -55,9 +59,22 @@ def require_admin():
     return info
 
 
+def require_super():
+    info = get_current_user()
+    if not info or info['role'] != 'admin' or not info.get('super'):
+        return None
+    return info
+
+
 @app.route('/')
 def index():
     return app.send_static_file('index.html')
+
+
+@app.route('/health')
+def health():
+    """保活探针：供外部定时任务访问，减少 Render 冷启动。"""
+    return jsonify({'ok': True})
 
 
 # ==================== AUTH ====================
@@ -67,25 +84,26 @@ def register():
     data = request.get_json()
     name = (data.get('name') or '').strip()
     class_name = (data.get('class_name') or '').strip()
-    student_id = (data.get('student_id') or '').strip()
     phone = (data.get('phone') or '').strip()
     password = data.get('password') or ''
 
-    if not all([name, class_name, student_id, phone, password]):
+    if not all([name, class_name, phone, password]):
         return jsonify({'success': False, 'msg': '请填写完整信息'}), 400
+    if not (phone.isdigit() and len(phone) == 11):
+        return jsonify({'success': False, 'msg': '请输入 11 位手机号'}), 400
 
     conn = get_db()
-    existing = conn.execute("SELECT id FROM users WHERE student_id=?", (student_id,)).fetchone()
+    existing = conn.execute("SELECT id FROM users WHERE phone=?", (phone,)).fetchone()
     if existing:
         conn.close()
-        return jsonify({'success': False, 'msg': '该学号已注册，一个学号只能注册一次'}), 400
+        return jsonify({'success': False, 'msg': '该手机号已注册，一个手机号只能注册一次'}), 400
 
     conn.execute(
-        "INSERT INTO users (name, class_name, student_id, phone, password) VALUES (?,?,?,?,?)",
-        (name, class_name, student_id, phone, hash_password(password))
+        "INSERT INTO users (name, class_name, phone, password) VALUES (?,?,?,?)",
+        (name, class_name, phone, hash_password(password))
     )
     conn.commit()
-    user = conn.execute("SELECT * FROM users WHERE student_id=?", (student_id,)).fetchone()
+    user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
     conn.close()
     user_dict = row_to_dict(user)
     token = generate_token('user', user_dict['id'])
@@ -96,15 +114,17 @@ def register():
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
-    student_id = (data.get('student_id') or '').strip()
+    phone = (data.get('phone') or '').strip()
     password = data.get('password') or ''
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE student_id=?", (student_id,)).fetchone()
+    user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
     conn.close()
     if not user:
-        return jsonify({'success': False, 'msg': '学号未注册'}), 400
+        return jsonify({'success': False, 'msg': '该手机号未注册'}), 400
     if user['password'] != hash_password(password):
         return jsonify({'success': False, 'msg': '密码错误'}), 400
+    if not user['status']:
+        return jsonify({'success': False, 'msg': '该账号已被停用，请联系管理员'}), 403
     user_dict = row_to_dict(user)
     token = generate_token('user', user_dict['id'])
     user_dict.pop('password', None)
@@ -153,8 +173,37 @@ def admin_login():
         return jsonify({'success': False, 'msg': '账号不存在'}), 400
     if admin['password'] != hash_password(password):
         return jsonify({'success': False, 'msg': '密码错误'}), 400
+    if not admin['status']:
+        return jsonify({'success': False, 'msg': '该账号已被停用'}), 403
     admin_dict = row_to_dict(admin)
-    token = generate_token('admin', admin_dict['id'])
+    token = generate_token('admin', admin_dict['id'], is_super=bool(admin_dict.get('is_super')))
+    admin_dict.pop('password', None)
+    return jsonify({'success': True, 'token': token, 'admin': admin_dict})
+
+
+@app.route('/api/admin/super-login', methods=['POST'])
+def admin_super_login():
+    """主管理员登录：除账号密码外，还需额外的主管理员密钥。"""
+    data = request.get_json()
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    super_key = (data.get('super_key') or '').strip()
+    if super_key != SUPER_KEY:
+        return jsonify({'success': False, 'msg': '主管理员密钥错误'}), 400
+    conn = get_db()
+    admin = conn.execute("SELECT * FROM admins WHERE username=?", (username,)).fetchone()
+    if not admin:
+        conn.close()
+        return jsonify({'success': False, 'msg': '账号不存在'}), 400
+    if admin['password'] != hash_password(password):
+        conn.close()
+        return jsonify({'success': False, 'msg': '密码错误'}), 400
+    conn.execute("UPDATE admins SET is_super=1 WHERE id=?", (admin['id'],))
+    conn.commit()
+    admin = conn.execute("SELECT * FROM admins WHERE id=?", (admin['id'],)).fetchone()
+    conn.close()
+    admin_dict = row_to_dict(admin)
+    token = generate_token('admin', admin_dict['id'], is_super=True)
     admin_dict.pop('password', None)
     return jsonify({'success': True, 'token': token, 'admin': admin_dict})
 
@@ -262,10 +311,9 @@ def orders():
         style = data.get('style') or ''
         name = (data.get('name') or '').strip()
         class_name = (data.get('class_name') or '').strip()
-        student_id = (data.get('student_id') or '').strip()
         phone = (data.get('phone') or '').strip()
 
-        if not all([product_id, name, class_name, student_id, phone]):
+        if not all([product_id, name, class_name, phone]):
             return jsonify({'success': False, 'msg': '请填写完整收货信息'}), 400
 
         conn = get_db()
@@ -275,8 +323,8 @@ def orders():
             return jsonify({'success': False, 'msg': '商品不存在'}), 400
         amount = product['price'] * quantity
         conn.execute(
-            "INSERT INTO orders (user_id, product_id, quantity, style, name, class_name, student_id, phone, amount, status) VALUES (?,?,?,?,?,?,?,?,?, 'pending_payment')",
-            (user['id'], product_id, quantity, style, name, class_name, student_id, phone, amount)
+            "INSERT INTO orders (user_id, product_id, quantity, style, name, class_name, phone, amount, status) VALUES (?,?,?,?,?,?,?,?, 'pending_payment')",
+            (user['id'], product_id, quantity, style, name, class_name, phone, amount)
         )
         conn.commit()
         oid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -334,20 +382,87 @@ def admin_orders():
     conn = get_db()
     if status:
         orders_list = conn.execute("""
-            SELECT o.*, p.name as product_name, p.image_url as product_image, u.name as user_name
+            SELECT o.*, p.name as product_name, p.image_url as product_image
             FROM orders o JOIN products p ON o.product_id=p.id
-            JOIN users u ON o.user_id=u.id
             WHERE o.status=? ORDER BY o.created_at DESC
         """, (status,)).fetchall()
     else:
         orders_list = conn.execute("""
-            SELECT o.*, p.name as product_name, p.image_url as product_image, u.name as user_name
+            SELECT o.*, p.name as product_name, p.image_url as product_image
             FROM orders o JOIN products p ON o.product_id=p.id
-            JOIN users u ON o.user_id=u.id
             ORDER BY o.created_at DESC
         """).fetchall()
     conn.close()
     return jsonify({'success': True, 'orders': rows_to_list(orders_list)})
+
+
+@app.route('/api/admin/orders/manual', methods=['POST'])
+def admin_order_manual():
+    """管理员手动录入线下订单，金额可自定义，直接计入营业额统计。"""
+    admin = require_admin()
+    if not admin:
+        return jsonify({'success': False, 'msg': '未授权'}), 401
+    data = request.get_json()
+    name = (data.get('name') or '').strip()
+    class_name = (data.get('class_name') or '').strip()
+    phone = (data.get('phone') or '').strip()
+    style = data.get('style') or ''
+    quantity = int(data.get('quantity') or 1)
+    product_id = data.get('product_id')
+    status = data.get('status') or 'paid'
+    if status not in ('pending_payment', 'paid', 'delivered', 'received', 'cancelled'):
+        return jsonify({'success': False, 'msg': '状态无效'}), 400
+    if not all([name, class_name, phone, product_id]):
+        return jsonify({'success': False, 'msg': '请填写姓名、班级、手机号和商品'}), 400
+
+    conn = get_db()
+    product = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+    if not product:
+        conn.close()
+        return jsonify({'success': False, 'msg': '商品不存在'}), 400
+    if data.get('amount') not in (None, ''):
+        amount = float(data.get('amount'))
+    else:
+        amount = product['price'] * quantity
+
+    # 若该手机号已有账号，关联到该账号；否则记为线下散客
+    matched = conn.execute("SELECT id FROM users WHERE phone=?", (phone,)).fetchone()
+    user_id = matched['id'] if matched else 0
+
+    conn.execute(
+        "INSERT INTO orders (user_id, product_id, quantity, style, name, class_name, phone, amount, status) VALUES (?,?,?,?,?,?,?,?,?)",
+        (user_id, product_id, quantity, style, name, class_name, phone, amount, status)
+    )
+    conn.commit()
+    oid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    order = conn.execute("""
+        SELECT o.*, p.name as product_name, p.image_url as product_image
+        FROM orders o JOIN products p ON o.product_id=p.id WHERE o.id=?
+    """, (oid,)).fetchone()
+    conn.close()
+    order_dict = row_to_dict(order)
+    socketio.emit('order_status_changed', {'order_id': oid}, room='admin')
+    if user_id:
+        socketio.emit('order_update', {'order': order_dict}, room=f"user_{user_id}")
+    return jsonify({'success': True, 'order': order_dict})
+
+
+@app.route('/api/admin/orders/<int:oid>', methods=['DELETE'])
+def admin_order_delete(oid):
+    admin = require_admin()
+    if not admin:
+        return jsonify({'success': False, 'msg': '未授权'}), 401
+    conn = get_db()
+    order = conn.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+    if not order:
+        conn.close()
+        return jsonify({'success': False, 'msg': '订单不存在'}), 404
+    conn.execute("DELETE FROM reviews WHERE order_id=?", (oid,))
+    conn.execute("DELETE FROM orders WHERE id=?", (oid,))
+    conn.commit()
+    conn.close()
+    socketio.emit('order_status_changed', {'order_id': oid, 'deleted': True}, room='admin')
+    return jsonify({'success': True})
 
 
 @app.route('/api/admin/orders/<int:oid>/status', methods=['PUT'])
@@ -367,7 +482,8 @@ def admin_order_status(oid):
     conn.execute("UPDATE orders SET status=? WHERE id=?", (status, oid))
     conn.commit()
     conn.close()
-    socketio.emit('order_update', {'order_id': oid, 'status': status}, room=f"user_{order['user_id']}")
+    if order['user_id']:
+        socketio.emit('order_update', {'order_id': oid, 'status': status}, room=f"user_{order['user_id']}")
     socketio.emit('order_status_changed', {'order_id': oid, 'status': status}, room='admin')
     return jsonify({'success': True})
 
@@ -387,7 +503,8 @@ def admin_order_amount(oid):
     conn.execute("UPDATE orders SET amount=? WHERE id=?", (amount, oid))
     conn.commit()
     conn.close()
-    socketio.emit('order_update', {'order_id': oid, 'amount': amount}, room=f"user_{order['user_id']}")
+    if order['user_id']:
+        socketio.emit('order_update', {'order_id': oid, 'amount': amount}, room=f"user_{order['user_id']}")
     socketio.emit('order_status_changed', {'order_id': oid, 'amount': amount}, room='admin')
     return jsonify({'success': True})
 
@@ -433,7 +550,7 @@ def admin_message_users():
         return jsonify({'success': False, 'msg': '未授权'}), 401
     conn = get_db()
     users = conn.execute("""
-        SELECT DISTINCT u.id, u.name, u.student_id,
+        SELECT DISTINCT u.id, u.name, u.class_name,
                (SELECT content FROM messages m WHERE m.user_id=u.id ORDER BY created_at DESC LIMIT 1) as last_msg,
                (SELECT created_at FROM messages m WHERE m.user_id=u.id ORDER BY created_at DESC LIMIT 1) as last_time
         FROM messages m JOIN users u ON m.user_id=u.id
@@ -517,7 +634,7 @@ def admin_reviews():
         return jsonify({'success': False, 'msg': '未授权'}), 401
     conn = get_db()
     reviews = conn.execute("""
-        SELECT r.*, o.name as buyer_name, o.student_id, p.name as product_name
+        SELECT r.*, o.name as buyer_name, o.class_name, p.name as product_name
         FROM reviews r
         JOIN orders o ON r.order_id=o.id
         JOIN products p ON o.product_id=p.id
@@ -573,6 +690,44 @@ def finance_costs():
     costs = conn.execute("SELECT * FROM costs ORDER BY cost_date DESC").fetchall()
     conn.close()
     return jsonify({'success': True, 'costs': rows_to_list(costs)})
+
+
+@app.route('/api/admin/finance/costs/<int:cid>', methods=['PUT', 'DELETE'])
+def finance_cost_detail(cid):
+    admin = require_admin()
+    if not admin:
+        return jsonify({'success': False, 'msg': '未授权'}), 401
+    conn = get_db()
+    cost = conn.execute("SELECT * FROM costs WHERE id=?", (cid,)).fetchone()
+    if not cost:
+        conn.close()
+        return jsonify({'success': False, 'msg': '该成本记录不存在'}), 404
+    if request.method == 'DELETE':
+        conn.execute("DELETE FROM costs WHERE id=?", (cid,))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    data = request.get_json()
+    amount = data.get('amount')
+    description = data.get('description')
+    cost_date = data.get('cost_date')
+    fields = []
+    values = []
+    if amount not in (None, ''):
+        fields.append("amount=?")
+        values.append(float(amount))
+    if description is not None:
+        fields.append("description=?")
+        values.append(description)
+    if cost_date:
+        fields.append("cost_date=?")
+        values.append(cost_date)
+    if fields:
+        values.append(cid)
+        conn.execute(f"UPDATE costs SET {','.join(fields)} WHERE id=?", values)
+        conn.commit()
+    conn.close()
+    return jsonify({'success': True})
 
 
 @app.route('/api/admin/finance/monthly')
@@ -634,9 +789,9 @@ def finance_export():
         ).fetchone()[0]
         ws.append([ym, round(income, 2), round(cost, 2), round(income - cost, 2), count])
     ws2 = wb.create_sheet("订单明细")
-    ws2.append(['订单号', '商品', '买家', '学号', '数量', '金额', '状态', '下单时间'])
+    ws2.append(['订单号', '商品', '买家', '班级', '手机号', '数量', '金额', '状态', '下单时间'])
     orders = conn.execute("""
-        SELECT o.id, p.name, o.name, o.student_id, o.quantity, o.amount, o.status, o.created_at
+        SELECT o.id, p.name, o.name, o.class_name, o.phone, o.quantity, o.amount, o.status, o.created_at
         FROM orders o JOIN products p ON o.product_id=p.id
         ORDER BY o.created_at DESC
     """).fetchall()
@@ -654,6 +809,89 @@ def finance_export():
     buf.seek(0)
     return send_file(buf, as_attachment=True, download_name=f"sparkjoy_finance_{year}.xlsx",
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ==================== SUPER ADMIN（主管理员）====================
+
+@app.route('/api/admin/super/users')
+def super_users():
+    info = require_super()
+    if not info:
+        return jsonify({'success': False, 'msg': '需要主管理员权限'}), 403
+    conn = get_db()
+    users = conn.execute("""
+        SELECT u.id, u.name, u.class_name, u.phone, u.status, u.created_at,
+               (SELECT COUNT(*) FROM orders o WHERE o.user_id=u.id) as order_count,
+               (SELECT COALESCE(SUM(o.amount),0) FROM orders o
+                 WHERE o.user_id=u.id AND o.status IN ('paid','delivered','received')) as total_amount
+        FROM users u ORDER BY u.created_at DESC
+    """).fetchall()
+    conn.close()
+    return jsonify({'success': True, 'users': rows_to_list(users)})
+
+
+@app.route('/api/admin/super/users/<int:uid>/orders')
+def super_user_orders(uid):
+    info = require_super()
+    if not info:
+        return jsonify({'success': False, 'msg': '需要主管理员权限'}), 403
+    conn = get_db()
+    orders_list = conn.execute("""
+        SELECT o.*, p.name as product_name, p.image_url as product_image
+        FROM orders o JOIN products p ON o.product_id=p.id
+        WHERE o.user_id=? ORDER BY o.created_at DESC
+    """, (uid,)).fetchall()
+    conn.close()
+    return jsonify({'success': True, 'orders': rows_to_list(orders_list)})
+
+
+@app.route('/api/admin/super/users/<int:uid>/status', methods=['PUT'])
+def super_user_status(uid):
+    info = require_super()
+    if not info:
+        return jsonify({'success': False, 'msg': '需要主管理员权限'}), 403
+    status = 1 if request.get_json().get('status') else 0
+    conn = get_db()
+    user = conn.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'success': False, 'msg': '账号不存在'}), 404
+    conn.execute("UPDATE users SET status=? WHERE id=?", (status, uid))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'status': status})
+
+
+@app.route('/api/admin/super/admins')
+def super_admins():
+    info = require_super()
+    if not info:
+        return jsonify({'success': False, 'msg': '需要主管理员权限'}), 403
+    conn = get_db()
+    admins = conn.execute(
+        "SELECT id, username, is_super, status, created_at FROM admins ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return jsonify({'success': True, 'admins': rows_to_list(admins)})
+
+
+@app.route('/api/admin/super/admins/<int:aid>/status', methods=['PUT'])
+def super_admin_status(aid):
+    info = require_super()
+    if not info:
+        return jsonify({'success': False, 'msg': '需要主管理员权限'}), 403
+    if aid == info['id']:
+        return jsonify({'success': False, 'msg': '不能停用当前登录的主账号'}), 400
+    status = 1 if request.get_json().get('status') else 0
+    conn = get_db()
+    admin = conn.execute("SELECT id FROM admins WHERE id=?", (aid,)).fetchone()
+    if not admin:
+        conn.close()
+        return jsonify({'success': False, 'msg': '账号不存在'}), 404
+    conn.execute("UPDATE admins SET status=? WHERE id=?", (status, aid))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'status': status})
 
 
 # ==================== SOCKET.IO ====================
@@ -711,6 +949,7 @@ if __name__ == '__main__':
     print(f"  本机地址:       http://127.0.0.1:{_port}")
     print(f"  手机/局域网:    http://{_lan_ip}:{_port}")
     print(f"  管理者密钥:     SPARKJOY-ADMIN-2026")
+    print(f"  主管理员密钥:   SPARKJOY-OWNER-2026")
     print(f"  ─────────────────────────────────────────────")
     print(f"  提示: 固定地址不随WiFi切换变化，手机和电脑")
     print(f"        连接同一WiFi即可用同一地址访问。")

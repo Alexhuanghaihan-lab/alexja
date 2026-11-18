@@ -13,25 +13,29 @@ DB_PATH = os.environ.get('DB_PATH') or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), 'sparkjoy.db'
 )
 
-
-SCHEMA = """
+# 各表结构（{table} 便于迁移时按临时表名重建）
+_USERS_DDL = """
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         class_name TEXT NOT NULL,
-        student_id TEXT NOT NULL UNIQUE,
         phone TEXT NOT NULL,
         password TEXT NOT NULL,
+        status INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+    )"""
 
+_ADMINS_DDL = """
     CREATE TABLE IF NOT EXISTS admins (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL,
+        is_super INTEGER DEFAULT 0,
+        status INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+    )"""
 
+_PRODUCTS_DDL = """
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -42,25 +46,25 @@ SCHEMA = """
         stock INTEGER DEFAULT 0,
         active INTEGER DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+    )"""
 
+_ORDERS_DDL = """
     CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL DEFAULT 0,
         product_id INTEGER NOT NULL,
         quantity INTEGER NOT NULL DEFAULT 1,
         style TEXT,
         name TEXT NOT NULL,
         class_name TEXT NOT NULL,
-        student_id TEXT NOT NULL,
         phone TEXT NOT NULL,
         amount REAL NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending_payment',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (product_id) REFERENCES products(id)
-    );
+    )"""
 
+_MESSAGES_DDL = """
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -69,8 +73,9 @@ SCHEMA = """
         content TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
-    );
+    )"""
 
+_REVIEWS_DDL = """
     CREATE TABLE IF NOT EXISTS reviews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_id INTEGER NOT NULL UNIQUE,
@@ -80,16 +85,22 @@ SCHEMA = """
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (order_id) REFERENCES orders(id),
         FOREIGN KEY (user_id) REFERENCES users(id)
-    );
+    )"""
 
+_COSTS_DDL = """
     CREATE TABLE IF NOT EXISTS costs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         amount REAL NOT NULL,
         description TEXT,
         cost_date TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-"""
+    )"""
+
+SCHEMA = (
+    _USERS_DDL + ';' + _ADMINS_DDL + ';' + _PRODUCTS_DDL + ';' + _ORDERS_DDL + ';'
+    + _MESSAGES_DDL + ';' + _REVIEWS_DDL + ';' + _COSTS_DDL + ';'
+    + "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone);"
+)
 
 
 def _convert(value):
@@ -249,11 +260,77 @@ def get_db():
     return conn
 
 
+# ---------- 数据迁移（兼容升级前的旧库结构） ----------
+
+def _sqlite_columns(conn, table):
+    try:
+        return [r['name'] for r in conn.execute("PRAGMA table_info(%s)" % table).fetchall()]
+    except Exception:
+        return []
+
+
+def _sqlite_add_column(conn, table, col, ddl):
+    if col not in _sqlite_columns(conn, table):
+        conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, ddl))
+
+
+def _sqlite_rebuild(conn, table, new_ddl, copy_cols):
+    """SQLite 不支持删除列/约束，用「建新表→拷数据→换名」的方式重建。"""
+    existing = _sqlite_columns(conn, table)
+    keep = [c for c in copy_cols if c in existing]
+    cols = ','.join(keep)
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("PRAGMA legacy_alter_table=ON")
+    conn.executescript(
+        "ALTER TABLE %s RENAME TO %s__old;\n" % (table, table)
+        + new_ddl.replace('TABLE IF NOT EXISTS ' + table, 'TABLE ' + table) + ";\n"
+        + "INSERT INTO %s (%s) SELECT %s FROM %s__old;\n" % (table, cols, cols, table)
+        + "DROP TABLE %s__old;" % table
+    )
+    conn.commit()
+    conn.execute("PRAGMA legacy_alter_table=OFF")
+    conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate(conn):
+    if USE_POSTGRES:
+        for stmt in [
+            # 学号已不再使用，登录改为手机号
+            "ALTER TABLE users DROP COLUMN IF EXISTS student_id",
+            "ALTER TABLE orders DROP COLUMN IF EXISTS student_id",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS status INTEGER DEFAULT 1",
+            "ALTER TABLE admins ADD COLUMN IF NOT EXISTS is_super INTEGER DEFAULT 0",
+            "ALTER TABLE admins ADD COLUMN IF NOT EXISTS status INTEGER DEFAULT 1",
+            # 线下手动订单用 user_id=0 表示，去掉外键约束
+            "ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_user_id_fkey",
+        ]:
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass
+        conn.commit()
+        return
+
+    _sqlite_add_column(conn, 'users', 'status', 'INTEGER DEFAULT 1')
+    _sqlite_add_column(conn, 'admins', 'is_super', 'INTEGER DEFAULT 0')
+    _sqlite_add_column(conn, 'admins', 'status', 'INTEGER DEFAULT 1')
+    if 'student_id' in _sqlite_columns(conn, 'users'):
+        _sqlite_rebuild(conn, 'users', _USERS_DDL,
+                        ['id', 'name', 'class_name', 'phone', 'password', 'status', 'created_at'])
+    if 'student_id' in _sqlite_columns(conn, 'orders'):
+        _sqlite_rebuild(conn, 'orders', _ORDERS_DDL,
+                        ['id', 'user_id', 'product_id', 'quantity', 'style', 'name',
+                         'class_name', 'phone', 'amount', 'status', 'created_at'])
+    conn.commit()
+
+
 def init_db():
     conn = get_db()
     c = conn.cursor()
     c.executescript(SCHEMA)
     conn.commit()
+    _migrate(conn)
     conn.close()
 
 

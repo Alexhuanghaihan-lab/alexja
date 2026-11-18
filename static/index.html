@@ -31,7 +31,7 @@
 
     <!-- 消费者登录 -->
     <form id="user-login-form" class="auth-form active">
-      <input type="text" name="student_id" placeholder="学号" required>
+      <input type="text" name="phone" placeholder="手机号" required>
       <input type="password" name="password" placeholder="密码" required>
       <button type="submit" class="btn-primary">登录</button>
     </form>
@@ -40,17 +40,18 @@
     <form id="user-register-form" class="auth-form">
       <input type="text" name="name" placeholder="姓名" required>
       <input type="text" name="class_name" placeholder="班级" required>
-      <input type="text" name="student_id" placeholder="学号" required>
       <input type="text" name="phone" placeholder="手机号" required>
       <input type="password" name="password" placeholder="设置密码" required>
       <button type="submit" class="btn-primary">注册</button>
-      <p class="hint">一个学号只能注册一次</p>
+      <p class="hint">一个手机号只能注册一次</p>
     </form>
 
     <!-- 管理者登录 -->
     <form id="admin-login-form" class="auth-form">
       <input type="text" name="username" placeholder="账号" required>
       <input type="password" name="password" placeholder="密码" required>
+      <label class="super-toggle"><input type="checkbox" id="admin-super-check"> 主管理员登录</label>
+      <input type="password" id="admin-super-key" name="super_key" placeholder="主管理员密钥" style="display:none">
       <button type="submit" class="btn-primary">登录</button>
     </form>
 
@@ -141,6 +142,7 @@
       <button class="sidebar-btn" data-tab="a-orders">订单管理</button>
       <button class="sidebar-btn" data-tab="a-finance">财务管理</button>
       <button class="sidebar-btn" data-tab="a-service">客服与评价</button>
+      <button class="sidebar-btn" data-tab="a-super" id="super-nav-btn" style="display:none">账号管理（主账号）</button>
     </aside>
 
     <main class="admin-main">
@@ -157,14 +159,15 @@
       <section id="a-orders" class="admin-pane">
         <div class="pane-header">
           <h2>订单管理</h2>
-          <div class="filter-bar">
-            <button class="filter-btn active" data-status="">全部</button>
-            <button class="filter-btn" data-status="pending_payment">待支付</button>
-            <button class="filter-btn" data-status="paid">已支付</button>
-            <button class="filter-btn" data-status="delivered">已交付</button>
-            <button class="filter-btn" data-status="received">已收货</button>
-            <button class="filter-btn" data-status="cancelled">已取消</button>
-          </div>
+          <button id="manual-order-btn" class="btn-primary">+ 手动添加订单</button>
+        </div>
+        <div class="filter-bar">
+          <button class="filter-btn active" data-status="">全部</button>
+          <button class="filter-btn" data-status="pending_payment">待支付</button>
+          <button class="filter-btn" data-status="paid">已支付</button>
+          <button class="filter-btn" data-status="delivered">已交付</button>
+          <button class="filter-btn" data-status="received">已收货</button>
+          <button class="filter-btn" data-status="cancelled">已取消</button>
         </div>
         <div id="admin-order-list" class="admin-order-list"></div>
       </section>
@@ -188,8 +191,10 @@
             <input type="number" step="0.01" name="amount" placeholder="金额" required>
             <input type="text" name="description" placeholder="描述">
             <input type="date" name="cost_date">
-            <button type="submit" class="btn-primary">录入成本</button>
+            <button type="submit" class="btn-primary" id="cost-submit-btn">录入成本</button>
+            <button type="button" class="btn-outline" id="cost-cancel-btn">取消</button>
           </form>
+          <div id="cost-list" class="cost-list"></div>
         </div>
 
         <div class="finance-section">
@@ -230,6 +235,33 @@
         </div>
         <div id="admin-reviews-sub" class="sub-pane">
           <div id="reviews-list" class="reviews-list"></div>
+        </div>
+      </section>
+
+      <!-- 主管理员：账号管理 -->
+      <section id="a-super" class="admin-pane">
+        <div class="pane-header">
+          <h2>账号管理</h2>
+          <div class="filter-bar">
+            <button class="filter-btn active" data-super="users">消费者账号</button>
+            <button class="filter-btn" data-super="admins">管理员账号</button>
+          </div>
+        </div>
+        <div id="super-users-sub" class="sub-pane active">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>ID</th><th>姓名</th><th>班级</th><th>手机号</th><th>订单数</th><th>累计消费</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="super-users-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="super-admins-sub" class="sub-pane">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>ID</th><th>账号</th><th>身份</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="super-admins-body"></tbody>
+            </table>
+          </div>
         </div>
       </section>
     </main>
@@ -273,15 +305,14 @@
           <input type="text" name="class_name" required>
         </div>
         <div class="form-group">
-          <label>学号</label>
-          <input type="text" name="student_id" required>
-        </div>
-        <div class="form-group">
           <label>手机号</label>
           <input type="text" name="phone" required>
         </div>
         <div class="order-total">合计：<span id="modal-total">¥0</span></div>
-        <button type="submit" class="btn-primary full">提交订单</button>
+        <div class="modal-actions">
+          <button type="button" class="btn-outline" onclick="closeModal('order-modal')">取消</button>
+          <button type="submit" class="btn-primary">提交订单</button>
+        </div>
       </form>
     </div>
   </div>
@@ -309,8 +340,13 @@
           <input type="number" step="0.01" name="price" required>
         </div>
         <div class="form-group">
-          <label>图片URL</label>
-          <input type="text" name="image_url" placeholder="https://...">
+          <label>商品图片</label>
+          <label class="file-upload-btn">
+            从图库/本地选择图片
+            <input type="file" id="product-image-file" accept="image/*" hidden>
+          </label>
+          <input type="text" name="image_url" placeholder="或粘贴图片URL https://...">
+          <img id="product-image-preview" class="img-preview" alt="">
         </div>
         <div class="form-group">
           <label>款式（逗号分隔）</label>
@@ -320,7 +356,10 @@
           <label>库存</label>
           <input type="number" name="stock" value="0">
         </div>
-        <button type="submit" class="btn-primary full">保存</button>
+        <div class="modal-actions">
+          <button type="button" class="btn-outline" onclick="closeModal('product-modal')">取消</button>
+          <button type="submit" class="btn-primary">保存</button>
+        </div>
       </form>
     </div>
   </div>
@@ -349,7 +388,65 @@
           <label>建议</label>
           <textarea name="content" rows="3" placeholder="您的评价和建议..."></textarea>
         </div>
-        <button type="submit" class="btn-primary full">提交评价</button>
+        <div class="modal-actions">
+          <button type="button" class="btn-outline" onclick="closeModal('review-modal')">取消</button>
+          <button type="submit" class="btn-primary">提交评价</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 手动添加订单弹窗 -->
+<div id="manual-order-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>手动添加订单（线下录入）</h3>
+      <button class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="manual-order-form">
+        <div class="form-group">
+          <label>商品</label>
+          <select name="product_id" id="manual-product-select" required></select>
+        </div>
+        <div class="form-group">
+          <label>款式（可选）</label>
+          <input type="text" name="style" placeholder="留空为默认">
+        </div>
+        <div class="form-group">
+          <label>数量</label>
+          <input type="number" name="quantity" value="1" min="1" required>
+        </div>
+        <div class="form-group">
+          <label>金额（留空则按商品单价×数量）</label>
+          <input type="number" step="0.01" name="amount" placeholder="自定义成交金额">
+        </div>
+        <div class="form-group">
+          <label>买家姓名</label>
+          <input type="text" name="name" required>
+        </div>
+        <div class="form-group">
+          <label>班级</label>
+          <input type="text" name="class_name" required>
+        </div>
+        <div class="form-group">
+          <label>手机号</label>
+          <input type="text" name="phone" required>
+        </div>
+        <div class="form-group">
+          <label>订单状态</label>
+          <select name="status">
+            <option value="paid">已支付</option>
+            <option value="delivered">已交付</option>
+            <option value="received">已收货</option>
+            <option value="pending_payment">待支付</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-outline" onclick="closeModal('manual-order-modal')">取消</button>
+          <button type="submit" class="btn-primary">保存订单</button>
+        </div>
       </form>
     </div>
   </div>

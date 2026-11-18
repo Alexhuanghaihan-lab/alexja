@@ -50,6 +50,23 @@ function statusText(s) {
   return { pending_payment: '待支付', paid: '已支付', delivered: '已交付', received: '已收货', cancelled: '已取消' }[s] || s;
 }
 
+// 数据库统一以 UTC 存储 "YYYY-MM-DD HH:MM:SS"，展示时转成本地时间，避免时区错误
+function toLocalDate(s) {
+  if (!s) return null;
+  const d = new Date(String(s).replace(' ', 'T') + 'Z');
+  return isNaN(d.getTime()) ? null : d;
+}
+function pad2(n) { return n.toString().padStart(2, '0'); }
+function fmtTime(s) {
+  const d = toLocalDate(s);
+  return d ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}` : '';
+}
+function fmtDateTime(s) {
+  const d = toLocalDate(s);
+  if (!d) return s || '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 // ---------- Auth ----------
 $$('.role-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -98,10 +115,20 @@ $('#user-register-form').addEventListener('submit', async e => {
   } else toast(data.msg);
 });
 
+$('#admin-super-check').addEventListener('change', e => {
+  $('#admin-super-key').style.display = e.target.checked ? 'block' : 'none';
+  $('#admin-super-key').required = e.target.checked;
+});
+
 $('#admin-login-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const fd = new FormData(e.target);
-  const data = await api('POST', '/admin/login', Object.fromEntries(fd));
+  const superMode = $('#admin-super-check').checked;
+  const body = {
+    username: e.target.username.value.trim(),
+    password: e.target.password.value,
+  };
+  if (superMode) body.super_key = e.target.super_key.value.trim();
+  const data = await api('POST', superMode ? '/admin/super-login' : '/admin/login', body);
   if (data.success) {
     saveSession('admin', data.token, data.admin);
     enterAdmin();
@@ -131,7 +158,8 @@ function enterConsumer() {
 function enterAdmin() {
   $('#auth-view').classList.remove('active');
   $('#admin-view').classList.add('active');
-  $('#admin-name').textContent = currentUser.username;
+  $('#admin-name').textContent = currentUser.username + (currentUser.is_super ? '（主账号）' : '');
+  $('#super-nav-btn').style.display = currentUser.is_super ? 'block' : 'none';
   connectSocket();
   loadAdminProducts();
   loadAdminOrders();
@@ -199,7 +227,6 @@ window.openOrderModal = function(pid) {
     const of = $('#order-form');
     of.name.value = currentUser.name;
     of.class_name.value = currentUser.class_name;
-    of.student_id.value = currentUser.student_id;
     of.phone.value = currentUser.phone;
     openModal('order-modal');
   });
@@ -271,7 +298,7 @@ function renderOrders() {
         <div class="order-meta">
           <div>款式：${o.style || '默认'}</div>
           <div>数量：${o.quantity}</div>
-          <div>收货人：${o.name} ${o.class_name} ${o.student_id}</div>
+          <div>收货人：${o.name} ${o.class_name}</div>
           <div class="amount">¥${o.amount}</div>
         </div>
       </div>
@@ -323,7 +350,7 @@ function renderChat() {
   box.innerHTML = chatMessages.map(m => `
     <div class="msg ${m.sender_type}">
       ${m.content}
-      <span class="time">${m.created_at ? m.created_at.substring(11, 16) : ''}</span>
+      <span class="time">${fmtTime(m.created_at)}</span>
     </div>
   `).join('');
   box.scrollTop = box.scrollHeight;
@@ -394,9 +421,79 @@ $$('.sidebar-btn').forEach(btn => btn.addEventListener('click', () => {
   const tab = btn.dataset.tab;
   if (tab === 'a-products') loadAdminProducts();
   if (tab === 'a-orders') loadAdminOrders();
-  if (tab === 'a-finance') { loadFinance(); loadMonthly(); }
+  if (tab === 'a-finance') { loadFinance(); loadMonthly(); loadCosts(); }
   if (tab === 'a-service') { loadConvList(); loadReviews(); }
+  if (tab === 'a-super') { loadSuperUsers(); loadSuperAdmins(); }
 }));
+
+// ---------- Admin: 主管理员账号管理 ----------
+$$('.filter-btn[data-super]').forEach(btn => btn.addEventListener('click', () => {
+  $$('.filter-btn[data-super]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  $$('#a-super .sub-pane').forEach(p => p.classList.remove('active'));
+  $('#super-' + btn.dataset.super + '-sub').classList.add('active');
+}));
+
+async function loadSuperUsers() {
+  const data = await api('GET', '/admin/super/users');
+  if (!data.success) { toast(data.msg); return; }
+  const body = $('#super-users-body');
+  if (!data.users.length) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-light)">暂无账号</td></tr>'; return; }
+  body.innerHTML = data.users.map(u => `
+    <tr>
+      <td>${u.id}</td>
+      <td>${u.name}</td>
+      <td>${u.class_name}</td>
+      <td>${u.phone}</td>
+      <td>${u.order_count}</td>
+      <td>¥${u.total_amount}</td>
+      <td>${u.status ? '<span class="status-ok">正常</span>' : '<span class="status-off">已停用</span>'}</td>
+      <td>
+        <button class="btn-outline" onclick="viewUserOrders(${u.id})">查看订单</button>
+        <button class="${u.status ? 'btn-danger' : 'btn-primary'}" onclick="toggleUserStatus(${u.id}, ${u.status ? 0 : 1})">${u.status ? '停用' : '启用'}</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+window.toggleUserStatus = async function(uid, status) {
+  const data = await api('PUT', `/admin/super/users/${uid}/status`, { status });
+  if (data.success) { toast(status ? '账号已启用' : '账号已停用'); loadSuperUsers(); }
+  else toast(data.msg);
+};
+
+window.viewUserOrders = async function(uid) {
+  const data = await api('GET', `/admin/super/users/${uid}/orders`);
+  if (!data.success) { toast(data.msg); return; }
+  if (!data.orders.length) { toast('该账号暂无订单'); return; }
+  const lines = data.orders.map(o =>
+    `#${o.id} ${o.product_name} ×${o.quantity} ¥${o.amount} ${statusText(o.status)} (${fmtDateTime(o.created_at)})`
+  ).join('\n');
+  alert('该账号的订单：\n' + lines);
+};
+
+async function loadSuperAdmins() {
+  const data = await api('GET', '/admin/super/admins');
+  if (!data.success) { toast(data.msg); return; }
+  const body = $('#super-admins-body');
+  body.innerHTML = data.admins.map(a => `
+    <tr>
+      <td>${a.id}</td>
+      <td>${a.username}</td>
+      <td>${a.is_super ? '<span class="status-ok">主账号</span>' : '普通管理员'}</td>
+      <td>${a.status ? '<span class="status-ok">正常</span>' : '<span class="status-off">已停用</span>'}</td>
+      <td>
+        ${a.is_super ? '—' : `<button class="${a.status ? 'btn-danger' : 'btn-primary'}" onclick="toggleAdminStatus(${a.id}, ${a.status ? 0 : 1})">${a.status ? '停用' : '启用'}</button>`}
+      </td>
+    </tr>
+  `).join('');
+}
+
+window.toggleAdminStatus = async function(aid, status) {
+  const data = await api('PUT', `/admin/super/admins/${aid}/status`, { status });
+  if (data.success) { toast(status ? '账号已启用' : '账号已停用'); loadSuperAdmins(); }
+  else toast(data.msg);
+};
 
 // ---------- Admin: Products ----------
 async function loadAdminProducts() {
@@ -423,6 +520,7 @@ $('#add-product-btn').addEventListener('click', () => {
   $('#product-modal-title').textContent = '添加商品';
   $('#product-form').reset();
   $('#product-form').dataset.editId = '';
+  $('#product-image-preview').removeAttribute('src');
   openModal('product-modal');
 });
 
@@ -436,8 +534,24 @@ window.editProduct = function(p) {
   f.styles.value = (p.styles || []).join(',');
   f.stock.value = p.stock;
   f.dataset.editId = p.id;
+  const preview = $('#product-image-preview');
+  if (p.image_url) preview.src = p.image_url; else preview.removeAttribute('src');
   openModal('product-modal');
 };
+
+// 从图库/本地选择图片，转为 base64 存入 image_url
+$('#product-image-file').addEventListener('change', e => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { toast('请选择图片文件'); return; }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const f = $('#product-form');
+    f.image_url.value = ev.target.result;
+    $('#product-image-preview').src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
 
 window.delProduct = async function(pid) {
   if (!confirm('确认下架该商品？')) return;
@@ -482,11 +596,10 @@ async function loadAdminOrders() {
       <div class="admin-order-body">
         <span><b>买家：</b>${o.name}</span>
         <span><b>班级：</b>${o.class_name}</span>
-        <span><b>学号：</b>${o.student_id}</span>
         <span><b>手机：</b>${o.phone}</span>
         <span><b>款式：</b>${o.style || '默认'}</span>
         <span><b>数量：</b>${o.quantity}</span>
-        <span><b>下单：</b>${o.created_at}</span>
+        <span><b>下单：</b>${fmtDateTime(o.created_at)}</span>
         <span><b>金额：</b><span class="price" style="color:var(--accent)">¥${o.amount}</span></span>
       </div>
       <div class="admin-order-actions">
@@ -499,6 +612,7 @@ async function loadAdminOrders() {
         </select>
         <input type="number" step="0.01" class="amount-input" value="${o.amount}" onchange="updateOrderAmount(${o.id}, this.value)">
         <button class="btn-outline" onclick="updateOrderAmount(${o.id}, this.previousElementSibling.value)">改金额</button>
+        <button class="btn-danger" onclick="deleteOrder(${o.id})">删除</button>
       </div>
     </div>
   `).join('');
@@ -515,6 +629,32 @@ window.updateOrderAmount = async function(oid, amount) {
   if (data.success) { toast('金额已修改'); loadFinance(); }
   else toast(data.msg);
 };
+
+window.deleteOrder = async function(oid) {
+  if (!confirm('确认删除该订单？删除后不可恢复。')) return;
+  const data = await api('DELETE', `/admin/orders/${oid}`);
+  if (data.success) { toast('订单已删除'); loadAdminOrders(); loadFinance(); }
+  else toast(data.msg);
+};
+
+// ---------- Admin: 手动添加订单 ----------
+$('#manual-order-btn').addEventListener('click', async () => {
+  const data = await api('GET', '/admin/products');
+  if (!data.success) return;
+  const sel = $('#manual-product-select');
+  sel.innerHTML = data.products.map(p => `<option value="${p.id}" data-price="${p.price}">${p.name}（¥${p.price}）</option>`).join('');
+  $('#manual-order-form').reset();
+  openModal('manual-order-modal');
+});
+
+$('#manual-order-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd);
+  const data = await api('POST', '/admin/orders/manual', body);
+  if (data.success) { toast('订单已录入'); closeModal('manual-order-modal'); loadAdminOrders(); loadFinance(); }
+  else toast(data.msg);
+});
 
 // ---------- Admin: Finance ----------
 async function loadFinance() {
@@ -560,10 +700,61 @@ $('#cost-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd);
-  const data = await api('POST', '/admin/finance/costs', body);
-  if (data.success) { toast('成本已录入'); e.target.reset(); loadFinance(); loadMonthly(); }
-  else toast(data.msg);
+  const editId = e.target.dataset.editId;
+  let data;
+  if (editId) data = await api('PUT', `/admin/finance/costs/${editId}`, body);
+  else data = await api('POST', '/admin/finance/costs', body);
+  if (data.success) {
+    toast(editId ? '成本已更新' : '成本已录入');
+    resetCostForm();
+    loadFinance();
+    loadMonthly();
+    loadCosts();
+  } else toast(data.msg);
 });
+
+function resetCostForm() {
+  const f = $('#cost-form');
+  f.reset();
+  f.dataset.editId = '';
+  $('#cost-submit-btn').textContent = '录入成本';
+}
+
+$('#cost-cancel-btn').addEventListener('click', resetCostForm);
+
+async function loadCosts() {
+  const data = await api('GET', '/admin/finance/costs');
+  if (!data.success) return;
+  const list = $('#cost-list');
+  if (!data.costs.length) { list.innerHTML = '<p style="color:var(--text-light);padding:8px">暂无成本记录</p>'; return; }
+  list.innerHTML = data.costs.map(c => `
+    <div class="cost-item">
+      <span class="cost-date">${c.cost_date}</span>
+      <span class="cost-desc">${c.description || '（无描述）'}</span>
+      <span class="cost-amount">¥${c.amount}</span>
+      <button class="btn-outline" onclick='editCost(${JSON.stringify(c)})'>编辑</button>
+      <button class="btn-danger" onclick="deleteCost(${c.id})">删除</button>
+    </div>
+  `).join('');
+}
+
+window.editCost = function(c) {
+  const f = $('#cost-form');
+  f.amount.value = c.amount;
+  f.description.value = c.description || '';
+  f.cost_date.value = c.cost_date || '';
+  f.dataset.editId = c.id;
+  $('#cost-submit-btn').textContent = '保存修改';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  toast('正在编辑成本，修改后点「保存修改」');
+};
+
+window.deleteCost = async function(cid) {
+  if (!confirm('确认删除该成本记录？')) return;
+  const data = await api('DELETE', `/admin/finance/costs/${cid}`);
+  if (data.success) { toast('已删除'); loadFinance(); loadMonthly(); loadCosts(); }
+  else toast(data.msg);
+};
 
 $('#export-excel-btn').addEventListener('click', () => {
   const year = $('#year-select').value || new Date().getFullYear();
@@ -585,7 +776,7 @@ async function loadConvList() {
   if (!data.users.length) { list.innerHTML = '<p style="padding:16px;color:var(--text-light)">暂无对话</p>'; return; }
   list.innerHTML = data.users.map(u => `
     <div class="conv-item ${adminChatUserId===u.id?'active':''}" onclick="selectConv(${u.id})">
-      <div class="cname">${u.name} (${u.student_id})</div>
+      <div class="cname">${u.name}（${u.class_name}）</div>
       <div class="clast">${u.last_msg || ''}</div>
     </div>
   `).join('');
@@ -606,7 +797,7 @@ function renderAdminChat() {
   box.innerHTML = adminChatMessages.map(m => `
     <div class="msg ${m.sender_type}">
       ${m.content}
-      <span class="time">${m.created_at ? m.created_at.substring(11, 16) : ''}</span>
+      <span class="time">${fmtTime(m.created_at)}</span>
     </div>
   `).join('');
   box.scrollTop = box.scrollHeight;
@@ -633,10 +824,10 @@ async function loadReviews() {
   list.innerHTML = data.reviews.map(r => `
     <div class="review-card">
       <div class="review-head">
-        <b>${r.buyer_name} (${r.student_id})</b>
+        <b>${r.buyer_name}（${r.class_name}）</b>
         <span class="review-stars">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
       </div>
-      <div style="font-size:12px;color:var(--text-light);margin-bottom:6px">商品：${r.product_name} · ${r.created_at}</div>
+      <div style="font-size:12px;color:var(--text-light);margin-bottom:6px">商品：${r.product_name} · ${fmtDateTime(r.created_at)}</div>
       <div class="review-content">${r.content || '（无文字评价）'}</div>
     </div>
   `).join('');
