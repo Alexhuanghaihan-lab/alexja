@@ -41,7 +41,16 @@ async function api(method, path, body) {
   if (currentToken) opts.headers['Authorization'] = 'Bearer ' + currentToken;
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(API + path, opts);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({ success: false, msg: '网络错误' }));
+  // 令牌失效：自动退回登录页，避免界面看似已登录但实际无权限
+  if (res.status === 401 && currentToken) {
+    clearSession();
+    $('#consumer-view').classList.remove('active');
+    $('#admin-view').classList.remove('active');
+    $('#auth-view').classList.add('active');
+    toast('登录已过期，请重新登录');
+    return { success: false, msg: '登录已过期' };
+  }
   return data;
 }
 

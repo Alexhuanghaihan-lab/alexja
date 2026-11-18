@@ -1,6 +1,8 @@
 import os
 import json
-import uuid
+import time
+import hmac
+import base64
 import hashlib
 from datetime import datetime
 from io import BytesIO
@@ -22,32 +24,57 @@ app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-tokens = {}
+# 令牌有效期（30 天）
+TOKEN_TTL = 60 * 60 * 24 * 30
 
 
 def hash_password(pwd):
     return hashlib.sha256(pwd.encode()).hexdigest()
 
 
+def _sign(raw):
+    return hmac.new(app.config['SECRET_KEY'].encode(), raw.encode(), hashlib.sha256).hexdigest()
+
+
 def generate_token(role, uid, is_super=False):
-    token = uuid.uuid4().hex
-    tokens[token] = {'role': role, 'id': uid, 'super': is_super}
-    return token
+    """生成无状态签名令牌：服务重启 / Render 冷启动后依旧有效，无需依赖内存。"""
+    payload = {'role': role, 'id': uid, 'super': bool(is_super),
+               'exp': int(time.time()) + TOKEN_TTL}
+    raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
+    return f"{raw}.{_sign(raw)}"
+
+
+def parse_token(token):
+    """校验签名与有效期，有效返回 payload，否则返回 None。"""
+    if not token or '.' not in token:
+        return None
+    raw, sig = token.rsplit('.', 1)
+    if not hmac.compare_digest(sig, _sign(raw)):
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(raw + '=' * (-len(raw) % 4)).decode())
+    except Exception:
+        return None
+    if int(payload.get('exp', 0)) < int(time.time()):
+        return None
+    return payload
 
 
 def get_current_user():
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
     if not token:
         token = request.args.get('token', '')
-    info = tokens.get(token)
-    if not info:
-        return None
-    return info
+    return parse_token(token)
 
 
 def require_user():
     info = get_current_user()
     if not info or info['role'] != 'user':
+        return None
+    conn = get_db()
+    row = conn.execute("SELECT status FROM users WHERE id=?", (info['id'],)).fetchone()
+    conn.close()
+    if not row or not row['status']:
         return None
     return info
 
@@ -56,12 +83,19 @@ def require_admin():
     info = get_current_user()
     if not info or info['role'] != 'admin':
         return None
+    conn = get_db()
+    row = conn.execute("SELECT status, is_super FROM admins WHERE id=?", (info['id'],)).fetchone()
+    conn.close()
+    if not row or not row['status']:
+        return None
+    # 以数据库为准，保证主账号身份长期有效
+    info['super'] = bool(row['is_super'])
     return info
 
 
 def require_super():
-    info = get_current_user()
-    if not info or info['role'] != 'admin' or not info.get('super'):
+    info = require_admin()
+    if not info or not info.get('super'):
         return None
     return info
 
@@ -921,7 +955,7 @@ def on_connect():
         return False
     token = auth_data.get('token')
     role = auth_data.get('role')
-    info = tokens.get(token)
+    info = parse_token(token)
     if not info or info['role'] != role:
         return False
     if role == 'admin':
