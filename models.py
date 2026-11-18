@@ -99,7 +99,6 @@ _COSTS_DDL = """
 SCHEMA = (
     _USERS_DDL + ';' + _ADMINS_DDL + ';' + _PRODUCTS_DDL + ';' + _ORDERS_DDL + ';'
     + _MESSAGES_DDL + ';' + _REVIEWS_DDL + ';' + _COSTS_DDL + ';'
-    + "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone);"
 )
 
 
@@ -309,6 +308,11 @@ def _migrate(conn):
                 conn.execute(stmt)
             except Exception:
                 pass
+        # 手机号唯一索引：旧库可能存在重复手机号，创建失败不影响启动
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone)")
+        except Exception:
+            pass
         conn.commit()
         return
 
@@ -322,6 +326,11 @@ def _migrate(conn):
         _sqlite_rebuild(conn, 'orders', _ORDERS_DDL,
                         ['id', 'user_id', 'product_id', 'quantity', 'style', 'name',
                          'class_name', 'phone', 'amount', 'status', 'created_at'])
+    # 手机号唯一索引：旧库可能存在重复手机号，创建失败不影响启动
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone)")
+    except Exception:
+        pass
     conn.commit()
 
 
